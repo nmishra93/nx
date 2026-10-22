@@ -870,7 +870,8 @@ def _tool_args_parse_error(c: dict[str, Any], err: json.JSONDecodeError, finish_
         detail += f" ({_abbr(len(args_text))} chars"
         if finish_reasons:
             detail += f"; finish_reason={','.join(finish_reasons)}"
-        detail += f"; {err.msg} at char {err.pos})"
+        # err.msg already ends in "at" ("Unterminated string starting at")
+        detail += f"; {err.msg} char {err.pos})"
     else:
-        detail += f" ({err.msg} at char {err.pos})"
+        detail += f" ({err.msg} char {err.pos})"
     return detail

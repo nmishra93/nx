@@ -348,11 +348,33 @@ def install_local_searx() -> str | None:
 
 
 def install_local_duckdb() -> str | None:
-    """Install the DuckDB CLI via the official install script (the same
-    command the duckdb tool's not-found error names). The script installs
-    to ~/.local/bin/duckdb; returns the binary path on success, None on
-    failure/unsupported platform (the wizard then just skips the step).
-    Needs curl (the script itself fetches nothing else interactively)."""
+    """Install the DuckDB CLI: the official install script on Linux/macOS
+    (the same command the duckdb tool's not-found error names; lands in
+    ~/.local/bin/duckdb), winget on Windows (DuckDB's own package; the CLI
+    lands on PATH via the package's links dir). Returns the binary path on
+    success, None on failure/unsupported platform (the wizard then just
+    skips the step)."""
+    if sys.platform == "win32":
+        for cmd in (["winget", "install", "--id", "DuckDB.cli",
+                     "--accept-source-agreements",
+                     "--accept-package-agreements"],
+                    ["scoop", "install", "duckdb"],
+                    ["choco", "install", "duckdb", "-y"]):
+            if _have(cmd[0]) and _run(cmd):
+                from shutil import which
+                path = which("duckdb")
+                if path:
+                    # winget's links dir is added to the USER PATH registry
+                    # but not to this process's PATH — re-executing nx (or a
+                    # new shell) picks it up; tell the user either way.
+                    print(f"  ✓ DuckDB CLI installed at {path}")
+                    return path
+                print("  ✓ DuckDB installed — open a new shell so PATH "
+                      "picks it up, then re-run `nx setup`.")
+                return None
+        print("  ✗ no winget/scoop/choco found — install DuckDB manually "
+              "(https://duckdb.org/docs/installation).")
+        return None
     if not _have("curl"):
         print("  ✗ curl not found — install DuckDB manually "
               "(https://duckdb.org/docs/installation).")

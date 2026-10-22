@@ -21,6 +21,9 @@ Design notes:
   degrades search to the DDG fallback), install a fresh loopback-only local
   instance from source (the docs/SEARXNG_SETUP.md steps, automated: clone, venv,
   settings.yml, systemd unit), or skip.
+- A DuckDB CLI question is folded in too (the `duckdb` tool shells out to
+  it): when `duckdb` is not on PATH we offer to run the official
+  https://install.duckdb.org script, which installs into ~/.local/bin.
 - Everything lands in ~/.env (NX_ENV_FILE override honored, same file
   _load_env_file reads at import) via _set_env_var, and the file is chmod
   600 afterwards — it now holds a real API key.
@@ -344,6 +347,34 @@ def install_local_searx() -> str | None:
     return None
 
 
+def install_local_duckdb() -> str | None:
+    """Install the DuckDB CLI via the official install script (the same
+    command the duckdb tool's not-found error names). The script installs
+    to ~/.local/bin/duckdb; returns the binary path on success, None on
+    failure/unsupported platform (the wizard then just skips the step).
+    Needs curl (the script itself fetches nothing else interactively)."""
+    if not _have("curl"):
+        print("  ✗ curl not found — install DuckDB manually "
+              "(https://duckdb.org/docs/installation).")
+        return None
+    if not _run(["sh", "-c",
+                 "curl --proto '=https' --tlsv1.2 -sSfL "
+                 "https://install.duckdb.org | sh"]):
+        return None
+    bin_dir = os.path.expanduser("~/.local/bin")
+    duckdb = os.path.join(bin_dir, "duckdb")
+    if os.path.exists(duckdb):
+        print(f"  ✓ DuckDB CLI installed at {duckdb}")
+        if bin_dir not in os.environ.get("PATH", "").split(os.pathsep):
+            print(f"  ! {bin_dir} is not on PATH — add it to your shell rc "
+                  "so the duckdb tool finds the CLI:")
+            print(f'      export PATH="{bin_dir}:$PATH"')
+        return duckdb
+    print("  ✗ installer ran but ~/.local/bin/duckdb is missing — check its "
+          "output above.")
+    return None
+
+
 def _needs_onboarding() -> bool:
     """True only when no API endpoint is configured anywhere.
 
@@ -494,6 +525,13 @@ def run_onboarding(interactive: bool = True) -> bool:
             retry = _prompt(f"  ✗ not reachable ({err}) — try again? (y/N)", "n")
             if retry.lower() != "y":
                 break
+
+    print("\nOptional: install the DuckDB CLI (the `duckdb` tool runs "
+          "analytical SQL over CSV/Parquet/JSON with it; the official "
+          "installer drops a single binary into ~/.local/bin). [Y/n]")
+    if not _have("duckdb") \
+            and _prompt("Install DuckDB CLI? (Y/n)", "y").strip().lower() != "n":
+        install_local_duckdb()
 
     _set_env_var("NX_SOURCES", "local")
     _set_env_var("NX_SOURCE_LOCAL_BASE_URL", base_url)

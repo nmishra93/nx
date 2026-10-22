@@ -61,13 +61,33 @@ def _repair_log(kind: str, what: str, raw: str = "") -> None:
         pass
 
 
-def _malformed_args_nudge(tool_name: str, broken_now: bool) -> str:
+def _malformed_args_nudge(tool_name: str, broken_now: bool,
+                          args_len: int = 0,
+                          finish_reasons: list[str] | None = None) -> str:
     """Retry nudge for a malformed/truncated native tool-call args turn.
 
     broken_now=True means the circuit breaker just dropped the tool from the
     session's tool list (this endpoint keeps truncating that tool's args), so
-    the model must switch tactics instead of re-emitting the doomed call."""
+    the model must switch tactics instead of re-emitting the doomed call.
+    args_len/finish_reasons detect the budget-cut case: when the endpoint
+    ended the stream with finish_reason=length (or the args were already
+    huge), an identical re-emit is truncated at the same spot deterministically
+    — the only way out is smaller calls, so say so instead of "retry cleanly".
+    """
     head = "Your previous native tool call had malformed or truncated JSON arguments"
+    if finish_reasons and "length" in finish_reasons or args_len >= 8192:
+        # Budget cut, not a fluke: the completion budget ended the stream mid-
+        # args (observed: a 28K-char run_bash heredoc). Retrying identically
+        # deterministically fails, so demand a decomposition instead.
+        return (head + " because the endpoint's completion budget cut the "
+                "stream short (finish_reason=length; the arguments were "
+                f"{args_len} chars). Re-emitting the same call will be "
+                "truncated again. Accomplish the step with smaller calls "
+                "instead: for large file content use write_file (or several "
+                "edit_file calls), and for long shell commands write the "
+                "script with write_file and run it with run_bash — never one "
+                "giant inline heredoc. Emit only that one complete tool call "
+                "with no surrounding prose.")
     if broken_now:
         # 0.29.9: the suggestion derives from the dropped tool ("use plain
         # edit_file calls" is nonsense when edit_file is the dropped one) —

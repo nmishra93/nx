@@ -271,7 +271,9 @@ def _handle_native_tool_calls(messages: list[Message], tcs: dict, text: str, fin
             # (the original failure was truncated at the same spot again). The
             # generic "retry cleanly" nudge produced 7 identical re-emits in
             # one observed session — say instead to change the action.
-            nudge = _malformed_args_nudge(tool_name, broken_now)
+            nudge = _malformed_args_nudge(tool_name, broken_now,
+                                          args_len=len(c.get("args") or ""),
+                                          finish_reasons=finish_reasons)
         else:
             nudge = (
                 "Your previous native tool call had malformed or truncated JSON "

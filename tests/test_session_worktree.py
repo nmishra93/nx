@@ -104,3 +104,66 @@ def test_repl_isolate_flag_wiring(repo, monkeypatch, capsys):
     nx.st.SESSION_WORKTREE = wt
     nx.st.PROJECT_ROOT = wt
     assert nx.st.SESSION_WORKTREE == wt
+
+
+# --- /sync (0.170.0): explicit review/sync merge-back ------------------------
+
+def test_sync_commits_and_merges(repo):
+    nx, rp = repo
+    wt, _ = nx._worktree.create_session_worktree("sid-sync")
+    nx.st.PROJECT_ROOT = wt  # the REPL chdirs; sync must still find the base
+    with open(os.path.join(wt, "new.txt"), "w") as f:
+        f.write("work\n")
+    ok, detail = nx._worktree.sync_session_worktree(wt, message="session work")
+    assert ok and "merged" in detail
+    assert (rp / "new.txt").read_text() == "work\n"
+    # idempotent: a second sync reports up-to-date, no new commit
+    head = subprocess.run(["git", "-C", str(rp), "rev-parse", "HEAD"],
+                          capture_output=True, text=True).stdout.strip()
+    ok, detail = nx._worktree.sync_session_worktree(wt)
+    assert ok and "already" in detail
+    head2 = subprocess.run(["git", "-C", str(rp), "rev-parse", "HEAD"],
+                           capture_output=True, text=True).stdout.strip()
+    assert head == head2
+
+
+def test_sync_conflict_aborts_cleanly(repo):
+    nx, rp = repo
+    wt, _ = nx._worktree.create_session_worktree("sid-conflict")
+    nx.st.PROJECT_ROOT = wt
+    with open(os.path.join(wt, "a.txt"), "a") as f:
+        f.write("session edit\n")
+    # the base repo moves on first
+    with open(os.path.join(rp, "a.txt"), "a") as f:
+        f.write("main edit\n")
+    subprocess.run(["git", "-C", str(rp), "commit", "-aqm", "main"],
+                   check=True, capture_output=True)
+    ok, detail = nx._worktree.sync_session_worktree(wt)
+    assert not ok and "aborted" in detail
+    r = subprocess.run(["git", "-C", str(rp), "status", "--porcelain"],
+                       capture_output=True, text=True)
+    # nxhome/ is the fixture's own untracked dir; ignore it
+    assert "a.txt" not in r.stdout and not any(
+        l.startswith("UU") or l.startswith("AA") for l in r.stdout.splitlines()
+    ), r.stdout  # base repo left untouched (no merge residue)
+
+
+def test_sync_remove_takes_worktree_down(repo):
+    nx, rp = repo
+    wt, _ = nx._worktree.create_session_worktree("sid-rm")
+    nx.st.PROJECT_ROOT = wt
+    with open(os.path.join(wt, "x.txt"), "w") as f:
+        f.write("x\n")
+    ok, _ = nx._worktree.sync_session_worktree(wt, remove=True)
+    assert ok
+    assert not os.path.isdir(wt)
+    r = subprocess.run(["git", "-C", str(rp), "branch", "--list",
+                        "nx/session-sid-rm"], capture_output=True, text=True)
+    assert r.stdout.strip() == ""
+
+
+def test_sync_without_worktree(repo):
+    nx, rp = repo
+    nx.st.PROJECT_ROOT = str(rp)
+    ok, detail = nx._worktree.sync_session_worktree("")
+    assert not ok

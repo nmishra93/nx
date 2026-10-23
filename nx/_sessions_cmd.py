@@ -742,6 +742,18 @@ def _cmd_save(user: str, state: _ReplState) -> None:
     print(f"{DIM}  ✓ saved session {state.session_id}{shown}{RESET}")
 
 
+def _cmd_sync(user: str, state: _ReplState) -> None:
+    """/sync — land this isolated session's work back in the base repo."""
+    from ._worktree import sync_session_worktree
+    args = user.split()[1:]
+    remove = any(a in ("--remove", "--rm") for a in args)
+    msg = " ".join(a for a in args if not a.startswith("-")) or None
+    ok, detail = sync_session_worktree(st.SESSION_WORKTREE or "",
+                                       message=msg, remove=remove)
+    mark = "✓" if ok else "⚠"
+    print(f"{DIM if ok else ''}  {mark} /sync: {detail}{RESET if ok else ''}")
+
+
 def _cmd_delete_handler(user: str, state: _ReplState) -> None:
     target = user.split(None, 1)[1].strip() if " " in user else None
     _cmd_delete(target, state.session_id)

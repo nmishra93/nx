@@ -38,7 +38,8 @@ from ._commands import bind_handlers, command, handler_map, help_rows
 from . import _repl_settings_cmds as _rsc
 from ._resume import resume_session
 from ._sessions_cmd import (
-    _cmd_sessions_handler, _cmd_resume_handler, _cmd_save, _cmd_delete_handler,
+    _cmd_sessions_handler, _cmd_resume_handler, _cmd_save, _cmd_sync,
+    _cmd_delete_handler,
     _cmd_export, _cmd_fork,
 )
 from ._memory_cmd import (
@@ -234,6 +235,7 @@ bind_handlers({
     "/export": _cmd_export,
     "/fork": _cmd_fork,
     "/save": _cmd_save,
+    "/sync": _cmd_sync,
     "/memory": _cmd_memory_handler,
     "/delete": _cmd_delete_handler,
     "/todo": _cmd_todo,
@@ -356,8 +358,8 @@ def _repl() -> None:
             st.SESSION_WORKTREE = wt
             st.PROJECT_ROOT = wt
             print(f"{DIM}  ⟂ isolated: worktree {wt} "
-                  f"(branch nx/session-{session_id}; merge it back with "
-                  f"`git merge nx/session-{session_id}`){RESET}")
+                  f"(branch nx/session-{session_id}; /sync merges it back "
+                  f"into the base repo){RESET}")
         elif err:
             print(f"{C.WARNING}  ⚠ couldn't isolate into a worktree: {err} "
                   f"— running in the shared tree{RESET}")

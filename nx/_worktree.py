@@ -128,6 +128,23 @@ def remove_session_worktree(path: str) -> None:
     except (OSError, subprocess.TimeoutExpired):
         return
     base = st.PROJECT_ROOT
+    # An isolated session has repointed PROJECT_ROOT at the worktree itself;
+    # the branch lives in the base repo (the worktree's git common dir), and
+    # by this line the tree is already gone, so PROJECT_ROOT no longer names
+    # a valid --target. Derive the real repo if PROJECT_ROOT isn't one.
+    if not base or not os.path.isdir(os.path.join(base, ".git")):
+        try:
+            r = subprocess.run(
+                ["git", "-C", path, "rev-parse", "--path-format=absolute",
+                 "--git-common-dir"],
+                capture_output=True, text=True, timeout=10)
+            common = (r.stdout or "").strip()
+            if r.returncode == 0 and common:
+                cand = os.path.dirname(common)
+                if os.path.isdir(os.path.join(cand, ".git")):
+                    base = cand
+        except (OSError, subprocess.TimeoutExpired):
+            pass
     # Read the branch BEFORE remove_worktree deletes the tree; the path-derived
     # name covers the detached-fallback case where rev-parse reports nothing.
     branch = _branch_of(path) or _session_branch_for(path)
@@ -142,6 +159,73 @@ def remove_session_worktree(path: str) -> None:
                            capture_output=True, text=True, timeout=10)
         except (OSError, subprocess.TimeoutExpired):
             pass
+
+
+def sync_session_worktree(path: str, *, message: str | None = None,
+                          remove: bool = False) -> tuple[bool, str]:
+    """Land this session's work back in the base repo: the explicit
+    review/sync step the isolation banner asks the user to do by hand.
+
+    Commits pending worktree changes (a pipeline commit, like _build.py's
+    merge-back), merges the session branch into the repo the worktree was
+    cut from, and — on request — removes the now-merged tree. Never leaves
+    the base repo mid-merge: a conflicted merge is aborted and reported.
+    Returns (ok, detail)."""
+    if not path or not os.path.isdir(path):
+        return False, "no session worktree to sync"
+    # The base repo is where the worktree's object store lives (its git common
+    # dir) — NOT st.PROJECT_ROOT, which an isolated session has repointed AT
+    # the worktree.
+    try:
+        r = subprocess.run(
+            ["git", "-C", path, "rev-parse", "--path-format=absolute",
+             "--git-common-dir"],
+            capture_output=True, text=True, timeout=10)
+        common = (r.stdout or "").strip()
+        base = os.path.dirname(common) if r.returncode == 0 and common else ""
+    except (OSError, subprocess.TimeoutExpired):
+        base = ""
+    if not base or not os.path.isdir(os.path.join(base, ".git")):
+        return False, "could not determine the base repo"
+
+    def git(*args: str, cwd: str = path) -> tuple[int, str]:
+        try:
+            r = subprocess.run(["git", "-C", cwd, *args],
+                               capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return 1, str(e)
+        return r.returncode, (r.stderr or r.stdout or "").strip()
+
+    rc, out = git("status", "--porcelain")
+    if rc != 0:
+        return False, "could not read the worktree's status"
+    if out:
+        rc, out = git("add", "-A")
+        if rc != 0:
+            return False, f"could not stage the worktree's changes: {out}"
+        rc, out = git("commit", "-m", message or "session sync (nx /sync)")
+        if rc != 0:
+            return False, f"could not commit the worktree's changes: {out}"
+    branch = _branch_of(path) or _session_branch_for(path)
+    if not branch:
+        return False, "could not determine the session branch"
+    rc, out = git("rev-parse", "HEAD")
+    if rc != 0:
+        return False, "could not read the worktree's HEAD"
+    head = out
+    rc, out = git("merge-base", "--is-ancestor", head, "HEAD", cwd=base)
+    if rc == 0:
+        landed = "already up to date"
+    else:
+        rc, out = git("merge", "--no-edit", head, cwd=base)
+        if rc != 0:
+            git("merge", "--abort", cwd=base)
+            return False, ("merge conflicted — aborted, the base repo is "
+                           f"untouched; resolve by hand: {out or 'conflict'}")
+        landed = "merged"
+    if remove:
+        remove_session_worktree(path)
+    return True, f"{landed} {branch} into {os.path.basename(base)}"
 
 
 def _branch_of(worktree: str) -> str | None:

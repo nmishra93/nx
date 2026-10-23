@@ -138,6 +138,9 @@ _SPECS = [
      "[focus]", [], None, 1, "workflow"),
     ("/build", "spec-driven pipeline: spec → parallel implementers → critique → fixes, on a feature branch",
      "[issue]", [], None, 1, "workflow"),
+    ("/sync", "in an isolated session, commit the worktree's changes and "
+     "merge the session branch back into the base repo (--remove also "
+     "deletes the worktree)", "[message] [--remove]", [], None, 1, "workflow"),
     ("/delete", "delete a saved session", "[target]", [], None, 1, "session"),
     ("/todo", "show the model's current todo_write list, full screen; Ctrl+G", None, [], None, 1, "context"),
     ("/wip", "snapshot work state (branch, dirty files, todos, note) into the session",

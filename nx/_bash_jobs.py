@@ -1001,16 +1001,24 @@ def run_bash(command: str, timeout: int | None = None,
 
 
 def _claim_newly_staged(pre: set[str], cwd: str | None) -> None:
-    """Claim the paths a just-finished raw git op NEWLY staged into the shared
-    index (post-run minus pre-run) as this session's own staged work, so
+    """Claim the paths a just-finished raw git op staged into the shared
+    index as this session's own staged work, so
     `_clobber.git_index_guard` stops prompting about them — and still prompts
-    for any path this session never staged. The diff is what keeps it
-    conservative: staged work that predates the command is never claimed by
-    it, so another session's entry stays attributable. Best-effort."""
+    for any path this session never staged. Beyond the newly-staged diff, every
+    already-claimed path STILL staged after the command gets re-claimed: a
+    `git add F` restages F's index blob, an on-disk claim (or an in-session one
+    checked after a restart) then no longer matches, and the guard would prompt
+    on this session's own work forever. Re-marking refreshes the stored blob to
+    the index's current one. Conservative: staged work that predates the
+    command AND was never claimed is never touched. Best-effort."""
     try:
         from ._clobber import staged_paths_abs
-        from ._stagedclaim import mark_staged
-        fresh = set(staged_paths_abs(cwd)) - pre
+        from ._stagedclaim import claimed_staged, mark_staged
+        post = set(staged_paths_abs(cwd))
+        fresh = post - pre
+        # already-claimed paths still staged after the command: their index
+        # blob may have changed under them (a re-add); refresh the claim.
+        fresh |= post & claimed_staged(pre)
         if fresh:
             mark_staged(fresh)
     except Exception:

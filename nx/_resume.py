@@ -35,13 +35,13 @@ def resumed_messages(data: dict[str, Any]) -> list[dict[str, Any]]:
       payload missing from the image store degrades to a text note.
     • the saved system prompt is dropped and the live `SYSTEM` prepended, so a
       resumed session picks up SYSTEM/tool edits.
-    • the memory-awareness and delegation notes are added/refreshed. Both are
-      no-ops when the transcript already carries an up-to-date note, which is
-      what keeps a normal resume byte-identical (prompt cache intact).
+    • the memory-awareness, delegation and web notes are added/refreshed. All
+      three are no-ops when the transcript already carries an up-to-date note,
+      which is what keeps a normal resume byte-identical (prompt cache intact).
     """
     from ._sessions_fs import _deserialize_image_parts
     from ._memory_cmd import _refresh_memory_note
-    from ._subagent import _add_delegation_note_if_absent
+    from ._subagent import _add_delegation_note_if_absent, _add_web_note_if_absent
     from ._prefix import is_prefix_note, pin_prefix, prefix_notes
     import nx as _m
 
@@ -64,6 +64,7 @@ def resumed_messages(data: dict[str, Any]) -> list[dict[str, Any]]:
     # the block above already carries the up-to-date note.)
     _refresh_memory_note(msgs)
     _add_delegation_note_if_absent(msgs)
+    _add_web_note_if_absent(msgs)
     pin_prefix(msgs)
     return msgs
 

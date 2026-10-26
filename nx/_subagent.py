@@ -89,6 +89,9 @@ from ._delegation_note import (  # noqa: F401 (re-exports)
     DELEGATION_GUIDANCE, DELEGATION_NOTE_MARKER, _add_delegation_note_if_absent,
     _delegation_enabled, _load_delegation_note,
 )
+from ._webnote import (  # noqa: F401 (re-exports; 0.171.0 web note)
+    WEB_GUIDANCE, WEB_NOTE_MARKER, _add_web_note_if_absent, _load_web_note,
+)
 from ._subagent_tiers import (  # noqa: F401 (re-exports)
     _READ_ONLY_TOOL_NAMES, _SUBAGENT_TLS, _SubagentContext, _subagent_active,
     _subagent_ctx, _subagent_table, _subagent_tools, _write_tier_dispatch,

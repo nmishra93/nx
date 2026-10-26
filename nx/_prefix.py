@@ -41,6 +41,8 @@ PREFIX_MARKERS = (
     "[Saved memories",
     "[Orientation note:",
     "[Delegation note:",
+    # 0.171.0: the web_fetch session-start note (static text, NX_WEBFETCH gate).
+    "[Web note:",
     # 0.162.0 (PTC Phase 2): the run_tools session-start note (static text;
     # the dynamic stub source rides the runtime-note tail, never the prefix).
     "[PTC note:",
@@ -111,7 +113,8 @@ def is_prefix_note(msg: Any) -> bool:
 # The prefix notes above (PREFIX_MARKERS) cover the AGENTS.md note
 # (nx/_agents.py:42), the memory index note (nx/_memory_note.py:31/135-140,
 # including the MEMORY_NOTE_CLEARED variant at :36-38), the orientation note
-# (nx/_orientation.py:51) and the delegation note (nx/_delegation_note.py:108).
+# (nx/_orientation.py:51), the delegation note (nx/_delegation_note.py:108),
+# the web note (nx/_webnote.py:32) and the PTC note (nx/_ptc_exec.py).
 #
 # Deliberately an explicit marker list, NOT "starts with `[`": a genuine user
 # message may well open with a bracketed path or tag (`[bug] the parser…`),
@@ -160,9 +163,9 @@ def is_satellite_message(msg: Any) -> bool:
 
 def prefix_notes() -> list[dict[str, Any]]:
     """The canonical, ordered prefix block: AGENTS.md, the memory index, the
-    orientation note, the delegation note — each included only when its producer
-    returns one. The single source of truth for both `_initial_messages()` and
-    `_resume.resumed_messages()`.
+    orientation note, the delegation note, the web note — each included only
+    when its producer returns one. The single source of truth for both
+    `_initial_messages()` and `_resume.resumed_messages()`.
 
     Producers are imported lazily: this module is imported by `_dispatch`, which
     in turn is imported early, and each producer pulls optional machinery
@@ -173,6 +176,7 @@ def prefix_notes() -> list[dict[str, Any]]:
     from ._memory_cmd import _load_memory_note
     from ._orientation import _load_orientation_note
     from ._subagent import _load_delegation_note
+    from ._webnote import _load_web_note
 
     root = getattr(st, "PROJECT_ROOT", None)
     candidates = (
@@ -180,6 +184,9 @@ def prefix_notes() -> list[dict[str, Any]]:
         _load_memory_note(root),
         _load_orientation_note(),
         _load_delegation_note(),
+        # 0.171.0: static web note, present only when web_fetch is offered
+        # (NX_WEBFETCH != 0) — the delegation-note pattern.
+        _load_web_note(),
         # 0.162.0 (PTC Phase 2): static PTC note, present only when run_tools
         # is offered (NX_PTC=1) — the delegation-note pattern. The stub-module
         # source itself is NOT here: it ships as a runtime-note tail

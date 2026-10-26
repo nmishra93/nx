@@ -644,8 +644,15 @@ def _run_async_agent(job_id: str, instruction: str, max_turns: int,
     # --porcelain` AND an unmoved HEAD. This catches the seen-live failure
     # where a turn-capped implementer's forced-final turn produces a plan as
     # prose — a self-report indistinguishable from a completion report.
+    # 0.171.1: worktree isolation does not steer WHERE the agent writes — the
+    # instruction's paths do (they usually name shared-tree files). So the
+    # outcome check must consider BOTH trees and is satisfied by edits in
+    # either; checking the worktree alone lied about landed work and
+    # downgraded completed runs to "partial".
     outcome_tree = None
     outcome_base = None
+    outcome_alt_tree = None  # the other tree to consult (see 0.171.1 above)
+    outcome_alt_base = None
     try:
         if tier in ("write", "implement") and worktree:
             # Caller-supplied (pre-created) checkout — e.g. /build creates the
@@ -654,6 +661,13 @@ def _run_async_agent(job_id: str, instruction: str, max_turns: int,
             # snapshot the outcome baseline against the given tree.
             outcome_tree = worktree
             outcome_base = _git_head(worktree)
+            # 0.171.1: the agent may have written to the shared tree anyway
+            # (absolute paths in the instruction); check both before crying
+            # "no edits". Baseline for the shared tree is its HEAD at spawn:
+            # only a mid-run parent commit moving HEAD would fail open, which
+            # is the safe direction.
+            outcome_alt_tree = st.PROJECT_ROOT or os.getcwd()
+            outcome_alt_base = _git_head(outcome_alt_tree)
         elif tier in ("write", "implement"):
             from ._worktree import (_worktree_enabled, create_worktree,
                                     sweep_stale_worktrees)
@@ -680,6 +694,11 @@ def _run_async_agent(job_id: str, instruction: str, max_turns: int,
             if worktree:
                 outcome_tree = worktree
                 outcome_base = _git_head(worktree)
+                outcome_alt_tree = st.PROJECT_ROOT or os.getcwd()
+                outcome_alt_base = _git_head(outcome_alt_tree)
+                # 0.171.1 (see caller-supplied branch above): the alt snapshot
+                # covers the same "instruction named shared-tree paths" case for
+                # the create_worktree path.
     except _SpawnRefused as e:
         # A refused spawn is finalized like any failed job: one ERROR note to
         # the parent, never a dangling running record or a dead thread.
@@ -718,7 +737,9 @@ def _run_async_agent(job_id: str, instruction: str, max_turns: int,
         # finish — its answer is a plan. Downgrade to partial so the parent
         # gets the PARTIAL note, not a completion report.
         if tier in ("write", "implement") and status == "done" and \
-                not _agent_made_edits(outcome_tree, outcome_base):
+                not _agent_made_edits(outcome_tree, outcome_base) and \
+                not (outcome_alt_tree and
+                     _agent_made_edits(outcome_alt_tree, outcome_alt_base)):
             status = "partial"
             answer += ("\n\n[No edits were found in the tree when this agent "
                        "finished — its answer is a plan, not a completed "
@@ -730,8 +751,10 @@ def _run_async_agent(job_id: str, instruction: str, max_turns: int,
     if worktree:
         answer += (f"\n\n[Worktree: this agent's edits are in {worktree} "
                    "(detached HEAD from the project root at spawn time) — "
-                   "merge or cherry-pick from there; the shared tree is "
-                   "untouched.]")
+                   "merge or cherry-pick from there. The instruction's paths "
+                   "decide where writes land: if it named shared-tree files, "
+                   "edits may be in the shared tree instead — check both "
+                   "before merging.]")
     # EXIT_STATE convention: read the machine state off the report, strip the
     # line from the prose, and surface it on every delivery surface (record,
     # report file, [Runtime note], /bg listing). Applies to the FINAL answer

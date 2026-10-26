@@ -187,6 +187,41 @@ def test_agent_made_edits_fails_open_on_bad_tree():
     assert S._agent_made_edits("/nonexistent-tree-xyz", "abc")
 
 
+def test_worktree_agent_editing_shared_tree_stays_done(tmp_path, monkeypatch):
+    # 0.171.1 regression: with NX_SUBAGENT_WORKTREE=1 the outcome check used to
+    # inspect ONLY the worktree; an agent that followed absolute shared-tree
+    # paths (worktree empty, shared tree dirty) was falsely downgraded to
+    # partial with "[No edits were found in the tree ...]". The check must be
+    # satisfied by edits in EITHER tree.
+    _repo(tmp_path)
+    st.PROJECT_ROOT = str(tmp_path)
+    st.PROJECT_ROOT_IS_GIT = True
+    nx.NX_SUBAGENT_WRITE = 1
+    nx.NX_SUBAGENT_WORKTREE = 1
+
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    _repo(wt)  # a pristine worktree checkout — the agent never touches it
+
+    def editing_shared_tree(instruction, max_turns, tier="read", scope=None,
+                            worktree=None, job_id=None):
+        (tmp_path / "nx" / "mod.py").write_text("x = 2  # edited\n")
+        return "done, edited nx/mod.py"
+
+    monkeypatch.setattr(S, "_run_sync_agent_body", editing_shared_tree)
+    monkeypatch.setattr(S, "_write_agent_report", lambda *a, **k: "/tmp/r.md")
+    S._ASYNC_AGENTS["job-w1"] = {"status": "running", "answer": None,
+                                 "instruction": "implement it",
+                                 "announced": False, "max_turns": 250,
+                                 "tier": "implement", "turns": 0,
+                                 "worktree": str(wt)}
+    S._run_async_agent("job-w1", "implement it", 250, tier="implement",
+                       worktree=str(wt))
+    rec = S._ASYNC_AGENTS["job-w1"]
+    assert rec["status"] == "done", rec["answer"]
+    assert "No edits were found" not in rec["answer"]
+
+
 def test_prose_only_downgrade_appends_hint(tmp_path, monkeypatch):
     _repo(tmp_path)
     st.PROJECT_ROOT = str(tmp_path)

@@ -114,7 +114,12 @@ def test_spawn_agent_omitted_async_never_nudges_even_with_fg_default(monkeypatch
     assert getattr(st, "_YOLO_ASYNC_NUDGED", False) is False
 
 
-def test_spawn_agent_explicit_false_nudges_via_call_site(monkeypatch):
+def test_spawn_agent_explicit_false_is_ignored_in_default_mode(monkeypatch):
+    """Always-background contract (0.170.x): an explicit async:false no longer
+    buys the foreground (so the old YOLO nudge for that choice is moot on this
+    path) — the spawn backgrounds even without an active model source check
+    hitting the sync path. The nudge still fires on the legacy NX_SUBAGENT_ASYNC=0
+    wiring, covered by the direct helper tests above."""
     _fresh_notice_state(monkeypatch)
     monkeypatch.setattr(nx, "NX_SUBAGENTS", 1)
     monkeypatch.setattr(nx, "NX_SUBAGENT_WRITE", 1)
@@ -122,7 +127,7 @@ def test_spawn_agent_explicit_false_nudges_via_call_site(monkeypatch):
     monkeypatch.setattr(st, "client", None, raising=False)
     out = sa.spawn_agent("test", tier="write", **{"async": False})
     assert "no active model source" in out
-    assert nx._notices.get("_PENDING_YOLO_ASYNC_NOTICE") is not None
+    assert nx._notices.get("_PENDING_YOLO_ASYNC_NOTICE") is None
 
 
 # --- 6. flush + pending plumbing --------------------------------------------------

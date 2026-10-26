@@ -81,6 +81,10 @@ def test_bad_tier_and_scope_refused(tmp_path, monkeypatch):
 
 def test_sync_result_is_lean_head_plus_path(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
+    # Always-background default: the legacy foreground wiring needs the
+    # NX_SUBAGENT_ASYNC=0 escape hatch (env + module attr).
+    monkeypatch.setenv("NX_SUBAGENT_ASYNC", "0")
+    monkeypatch.setattr(nx, "NX_SUBAGENT_ASYNC", 0, raising=False)
     out = S.spawn_agent("investigate the flurb", tier="read",
                         **{"async": "false"})
     assert out.startswith("[sub-agent finished]")
@@ -95,6 +99,8 @@ def test_sync_result_is_lean_head_plus_path(tmp_path, monkeypatch):
 def test_sync_inline_escape_hatch(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     nx.NX_SUBAGENT_SYNC_INLINE = 1
+    monkeypatch.setenv("NX_SUBAGENT_ASYNC", "0")
+    monkeypatch.setattr(nx, "NX_SUBAGENT_ASYNC", 0, raising=False)
     out = S.spawn_agent("x", **{"async": "false"})
     assert out == "did the thing" * 200
 

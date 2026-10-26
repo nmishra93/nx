@@ -67,6 +67,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import threading
 import time
 from typing import Any
@@ -1530,7 +1531,7 @@ def _run_sync_agent_body(instruction: str, max_turns: int, tier: str = "read",
     return answer
 
 
-def _async_default() -> bool:
+def _async_default() -> bool:  # pragma: no cover - legacy knob, no longer consulted
     """True when an unspecified spawn defaults to the background. Reads the
     top-level module attribute first (so tests/REPL can flip it live), env as
     fallback. Default is 1 (background): the old synchronous default rendered
@@ -1649,19 +1650,22 @@ def spawn_agent(instruction: str, max_turns: Any = None, async_: Any = None,
                     "strings (relative to the project root), e.g. "
                     "['nx/_turn*.py']")
         scope = [x.strip() for x in scope if x.strip()]
-    # None = the model (or a direct caller) omitted `async` - fall to
-    # NX_SUBAGENT_ASYNC (background by default since 0.18.8). An explicit
-    # false - bool or "false"/"0" string - must WIN over the knob: it is the
-    # documented foreground escape hatch.
-    # The model's EXPLICIT async choice (None = omitted), captured before the
-    # NX_SUBAGENT_ASYNC default fills it in: the nudge below must fire only on
-    # a deliberate async:false, never on the user's own foreground default.
-    explicit_async = async_
-    if async_ is None:
-        async_ = _async_default()
-    want_async = async_ is True or (
-        isinstance(async_, str) and async_.strip().lower() in ("1", "true", "yes", "on"))
-    _maybe_nudge_yolo_async(t, explicit_async)
+    # Sub-agents are ALWAYS background now: an explicit async:false (bool or
+    # "false"/"0" string) no longer buys the foreground — the foreground path
+    # remains only as the internal write-tier downgrade below and for direct
+    # callers via _run_sync_agent. The legacy escape hatch survives only when
+    # the user EXPLICITLY sets NX_SUBAGENT_ASYNC=0 in the environment (tests
+    # exercise the sync sub-loop that way): then the legacy wiring applies in
+    # full — foreground default, explicit async honored.
+    _m = sys.modules.get("nx")
+    _knob_off = os.environ.get("NX_SUBAGENT_ASYNC") == "0" and (
+        _m is None or not getattr(_m, "NX_SUBAGENT_ASYNC", 1))
+    if _knob_off:
+        want_async = async_ is True or (isinstance(async_, str) and
+                                        async_.strip().lower() in ("1", "true", "yes", "on"))
+        _maybe_nudge_yolo_async(t, async_)
+    else:
+        want_async = True
     if want_async:
         # EXPLICIT refusal, never a silent downgrade or silent auto-denial:
         # a detached thread cannot show the approval prompt a write-tier

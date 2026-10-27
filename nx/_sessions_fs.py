@@ -382,16 +382,21 @@ def _write_session_snapshot(
             pass
         # Stale FTS rows are swept here too -- amortized once per
         # NX_SESSION_SWEEP_INTERVAL seconds (default 300), process-wide.
-        # Same P6 gate as before.
-        try:
-            from . import _sessiondb
-            if _sweep_due("prune"):
-                _sessiondb.prune_stale()
-                # Opt-in retention (disabled by default): ride the existing
-                # "prune" gate, no new sweep kind.
-                _sessiondb.retention_sweep()
-        except Exception:
-            pass
+        # Same P6 gate as before. Skipped in the exit form: a sweep is
+        # O(store) (the FTS backfill batch alone measured >10 s on a
+        # 3.5 GB store with 100k-message sessions), and /quit's flush
+        # joins the in-flight save. The sweep is maintenance, not
+        # correctness — the next session's first indexed save re-runs it.
+        if not _EXITING:
+            try:
+                from . import _sessiondb
+                if _sweep_due("prune"):
+                    _sessiondb.prune_stale()
+                    # Opt-in retention (disabled by default): ride the existing
+                    # "prune" gate, no new sweep kind.
+                    _sessiondb.retention_sweep()
+            except Exception:
+                pass
     _maybe_gc_image_sidecars(merged)
     # Swarm P10: obsstore TTL/quota, amortized (own gate) -- a packed-
     # result store must not grow forever now that it is shared.

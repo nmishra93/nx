@@ -98,6 +98,15 @@ SCHEMA_EPOCH = 2
 # escape hatch users actually need is `nx sessions --reindex`.
 FTS_BACKFILL_BATCH_DEFAULT = 8
 
+# Wall-clock ceiling per backfill invocation (0.171.2): the batch constant was
+# calibrated on ~125 ms/session rebuilds, but a store whose sessions run to
+# 100k+ messages pays seconds PER session (a 175k-message rebuild measured
+# ~1.4 s), turning one gated invocation into a 10 s stall — visible exactly
+# when the user is waiting on /quit, whose flush joins the in-flight save.
+# The batch stays the unit of progress; the clock cuts it short. 0 disables
+# the budget (the old unbounded behavior).
+FTS_BACKFILL_BUDGET_S = 2.0
+
 
 def _sessions_dir() -> str:
     # Local import: _sessions_fs is the store's primary *caller* and reads
@@ -1667,7 +1676,14 @@ def _fts_body_backfill_conn(conn: sqlite3.Connection, batch: int) -> int:
             _fts_body_version_set(conn, FTS_BODY_SCHEMA_VERSION)
         return 0
     failed = 0
+    budget = float(_env_int("NX_FTS_BACKFILL_BUDGET_MS",
+                            int(FTS_BACKFILL_BUDGET_S * 1000))) / 1000.0
+    deadline = (time.monotonic() + budget) if budget > 0 else None
+    out_of_time = False
     for sid in sids:
+        if deadline is not None and time.monotonic() >= deadline:
+            out_of_time = True  # the batch is a ceiling, not a quota
+            break               # — unfinished sids resume on a later sweep
         try:
             _fts_backfill_one_conn(conn, sid)
         except sqlite3.Error:
@@ -1679,7 +1695,10 @@ def _fts_body_backfill_conn(conn: sqlite3.Connection, batch: int) -> int:
             except sqlite3.Error:
                 pass
     conn.commit()
-    if not maybe_more and failed == 0:
+    # The marker may land only when the probe PROVED completeness AND this
+    # invocation actually finished the list it named — a budget break leaves
+    # stale rows behind, and stamping here would strand them forever.
+    if not maybe_more and failed == 0 and not out_of_time:
         _fts_body_version_set(conn, FTS_BODY_SCHEMA_VERSION)
     return len(sids)
 

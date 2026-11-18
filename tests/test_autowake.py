@@ -302,6 +302,37 @@ class _null_ctx:
         return False
 
 
+def test_read_multiline_nontty_wake_returns_sentinel(monkeypatch):
+    # Piped/IDE sessions take the input() fallback, which used to discard the
+    # wake kwarg entirely — a finished background job never auto-continued.
+    # With _WAKE_DUE set and wake=True the fallback must return the sentinel
+    # WITHOUT prompting (the typed/piped line stays unread for next prompt).
+    import nx._chatbox as cb
+    monkeypatch.setattr(cb.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(cb.sys.stdout, "isatty", lambda: False)
+    m.st._WAKE_DUE = True
+
+    def _no_input(prompt=""):
+        raise AssertionError("wake-due fallback must not block on input()")
+
+    monkeypatch.setattr(builtins, "input", _no_input)
+    assert m.read_multiline(wake=True) is _autowake.WAKE_INPUT  # type: ignore[call-arg]
+
+
+def test_read_multiline_nontty_no_wake_still_prompts(monkeypatch):
+    # Nothing due, or wake not requested: the fallback keeps its old contract.
+    import nx._chatbox as cb
+    monkeypatch.setattr(cb.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(cb.sys.stdout, "isatty", lambda: False)
+    monkeypatch.setattr(builtins, "input", lambda prompt="": "typed line")
+    # Due flag set but wake=False: the caller never asked to be woken.
+    m.st._WAKE_DUE = True
+    assert m.read_multiline() == "typed line"
+    # wake=True but nothing due: normal prompt.
+    m.st._WAKE_DUE = False
+    assert m.read_multiline(wake=True) == "typed line"  # type: ignore[call-arg]
+
+
 # ---------------------------------------------------------------------------
 # 3. the REPL: WAKE_INPUT → synthetic turn
 # ---------------------------------------------------------------------------
@@ -679,6 +710,8 @@ def test_hold_notice_staged_on_streak_cap_trip():
     limit = _autowake._wake_streak_limit()
     m.st._WAKE_STREAK = limit
     try:
+        # Nothing is staged and no work is unstaged here, so there is nothing
+        # to report: the park stays parked (False) but still stages the note.
         assert _autowake.wake_due() is False
         note = _hold_note()
         assert note and note.startswith(RUNTIME_NOTE_PREFIX), note
@@ -705,7 +738,9 @@ def test_hold_notice_is_idempotent_per_reason_and_streak():
                                             _autowake._HOLD_STREAK_CAP) is True
         assert _autowake._stage_hold_notice("wake streak 25/25 again",
                                             _autowake._HOLD_STREAK_CAP) is False
-        # poll ticks: wake_due() re-trips the guard, the note stays single
+        # poll ticks: the park's one report wake fires first, then wake_due()
+        # re-trips the guard and the note stays single
+        assert _autowake.wake_due() is True
         for _ in range(5):
             assert _autowake.wake_due() is False
         assert _autowake._HOLD_STAGED == (_autowake._HOLD_STREAK_CAP, limit)

@@ -1198,14 +1198,27 @@ def read_multiline(initial: str = "", history: list[str] | None = None,
     an empty prompt (nx/_autowake.py): the raw editor's key loop checks the
     flag between keypresses, so the wake lands within ~0.2s of the next key
     — or immediately if the user hasn't started typing. Half-typed text is
-    stashed in _WAKE_PREFILL and restored by the REPL after the wake turn."""
+    stashed in _WAKE_PREFILL and restored by the REPL after the wake turn.
+    Non-TTY fallbacks have no key loop to poll, so they check the flag once
+    before the blocking input(): a due wake returns the sentinel and leaves
+    the user's (piped) line unread for the next prompt."""
     from . import _autowake
+
+    def _fallback() -> str:
+        # Wake seam for the input() fallbacks (piped/IDE sessions): there is
+        # no key loop to poll here, so the only check point is before the
+        # block. The sentinel short-circuits the prompt; the REPL re-verifies
+        # via wake_due() anyway, and the unread input arrives next prompt.
+        if wake and st._WAKE_DUE:
+            return cast(str, _autowake.WAKE_INPUT)
+        return _chatbox_fallback(f"{C.ACCENT}you ›{RESET} ")
+
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         # Fallback path — single-line input. Same UX as before this feature.
-        return _chatbox_fallback(f"{C.ACCENT}you ›{RESET} ")
+        return _fallback()
     try:
         return _chatbox_raw(initial, history, wake=_autowake.WAKE_INPUT if wake else None)
     except (EOFError, KeyboardInterrupt):
         raise
     except OSError:
-        return _chatbox_fallback(f"{C.ACCENT}you ›{RESET} ")
+        return _fallback()

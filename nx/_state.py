@@ -795,6 +795,14 @@ SCALAR_SLOTS: tuple[str, ...] = (
     "_WAKE_STALL_PENDING",
     "_WAKE_CHAIN_SPEND",
     "_WAKE_CHAIN_BASE",
+    # the instruction selector's inputs: _campaign_pending() reads _TODOS
+    # (non-done item) AND _SPAWNED_WRITE_TIER; a leftover pair makes
+    # wake_instruction() emit CAMPAIGN wording in an unrelated later wake
+    # (seen live: test_batch_run's second-turn assert). _TODOS is a list but
+    # hand-swept in the reset body next to its scalar partner (same shape as
+    # the hand-swept _BG_NOTICE_SEEN). _SPAWNED_WRITE_TIER moves out of
+    # _SCALAR_SLOTS_EXEMPT: it is session residue, not a per-turn latch.
+    "_SPAWNED_WRITE_TIER",
     # background-completion scan state: _BG_NOTICE_SEEN is the "pids already
     # announced" set (None = re-seed from the baseline) and _BG_SCAN_DONE gates
     # the sweep — either left set makes the sweep announce a real bg job as a
@@ -852,7 +860,6 @@ _SCALAR_SLOTS_EXEMPT: tuple[str, ...] = (
     "_PATH_FAIL_LAST",
     "_PATH_FAIL_RUN",
     "_OCC_NATIVE_COMPACTIONS",
-    "_SPAWNED_WRITE_TIER",
     "_TURN_ACTIVE",
     # dispatch/verify transient latches
     "_ACTIVE_PTC_PROC",

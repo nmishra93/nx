@@ -204,6 +204,7 @@ def test_scalar_slots_exist_and_are_drained_by_the_reset_body():
         "_WAKE_STALL_AT": 1234.5, "_WAKE_STALL_REVISION": 99,
         "_WAKE_STALL_HOLD": True, "_WAKE_STALL_PENDING": True,
         "_WAKE_CHAIN_SPEND": 999999, "_WAKE_CHAIN_BASE": 4242,
+        "_SPAWNED_WRITE_TIER": True,
         "_BG_SCAN_DONE": True, "_BG_NOTICE_SEEN": {"123"},
         "_LAST_PROMPT": [{"stale": True}], "_LAST_COMPRESSION": {"kept": 1},
     }
@@ -212,6 +213,7 @@ def test_scalar_slots_exist_and_are_drained_by_the_reset_body():
         "_WAKE_STALL_AT": 0.0, "_WAKE_STALL_REVISION": -1,
         "_WAKE_STALL_HOLD": False, "_WAKE_STALL_PENDING": False,
         "_WAKE_CHAIN_SPEND": 0, "_WAKE_CHAIN_BASE": 0,
+        "_SPAWNED_WRITE_TIER": False,
         "_BG_SCAN_DONE": False, "_BG_NOTICE_SEEN": None,
         "_LAST_PROMPT": None, "_LAST_COMPRESSION": None,
     }

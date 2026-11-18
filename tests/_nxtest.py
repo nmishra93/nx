@@ -489,6 +489,14 @@ def nx_state_reset_body() -> None:
         st._WAKE_STALL_REVISION = -1
         st._WAKE_STALL_HOLD = False
         st._WAKE_STALL_PENDING = False
+        # The instruction selector's inputs: _campaign_pending() reads
+        # st._TODOS (non-done item) AND st._SPAWNED_WRITE_TIER, and
+        # wake_instruction() falls back to CAMPAIGN wording when it holds.
+        # test_wake_stall.py plants both via bare setup_function assignments
+        # and leaves them set, so an unrelated later test's wake turn got
+        # campaign text (0.172.1 residue fix).
+        st._TODOS = []
+        st._SPAWNED_WRITE_TIER = False
         # Background-completion scan state: st._BG_NOTICE_SEEN is read as "pids
         # already announced" but None means "re-seed from the baseline", and
         # _BG_SCAN_DONE gates the sweep — neither is rewound by anything else.

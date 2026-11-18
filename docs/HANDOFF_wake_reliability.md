@@ -3,9 +3,7 @@ title: "Wake reliability: main model misses subagent completion/failure"
 status: resolved
 touched: 2026-11-18
 in_flight: []
-next:
-  - Triager: tests/test_batch_run.py::test_autowake_finished_agent_gets_second_turn fails after tests/test_wake_stall.py runs (stale _WAKE_STALL_PENDING residue, reproduces at HEAD)
-  - Triager: tests/test_subagent.py::test_subagent_loop_uses_readonly_dispatch — env UnicodeDecodeError scanning a ~20MB binary
+next: []
 read_first:
   - docs/HANDOFF_wake_reliability.md
 ---

@@ -107,6 +107,16 @@ def _flush_pending_background_notice(messages: list[dict[str, Any]]) -> None:
     if subagent_note:
         messages.append({"role": "user", "content": subagent_note})
         _delivered.add(subagent_note)
+        # Attribute delivery to the record(s) that staged it BEFORE clearing
+        # the slot: marking announced and clearing the slot must be atomic
+        # with respect to _stage_subagent_answer's re-stage path (a worker
+        # finalizing between the clear and the mark would see announced=False
+        # + a cached _note and re-stage an already-delivered note — spurious
+        # wake + double delivery, 0.172.1). _mark_notes_delivered takes
+        # _ASYNC_LOCK; the re-stage check reads `announced` under the same
+        # lock, so ordering the mark first closes the race window.
+        from ._subagent import _mark_notes_delivered
+        _mark_notes_delivered(subagent_note)
         _notices.set_("_PENDING_SUBAGENT_NOTICE", None)
     # Online Context Compact (0.67.0): the post-compaction continuation note
     # (re-issue the plan) staged by _occompact.maybe_compact_after_boundary.
@@ -173,6 +183,11 @@ def _flush_module_store_notes(messages: list[dict[str, Any]],
             continue
         messages.append({"role": "user", "content": _mod})
         setattr(st, _slot, None)
+        if _slot == "_PENDING_SUBAGENT_NOTICE":
+            # Same delivery attribution as the frame drain above: this module
+            # copy is a note being delivered now (0.172 wake-loss fix).
+            from ._subagent import _mark_notes_delivered
+            _mark_notes_delivered(_mod)
 
 
 def _keep_past_notes(body: list[dict[str, Any]], keep: int) -> int:

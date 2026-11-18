@@ -845,6 +845,11 @@ def _cmd_reset(user: str, state: _ReplState) -> None:
                   "_PENDING_VERIFY_NOTICE", "_PENDING_OCC_REMINDER",
                   "_PENDING_YOLO_ASYNC_NOTICE", "_PENDING_DELEGATION_NOTICE"):
         setattr(st, _slot, None)
+    # 0.172: a sub-agent note cleared above was never DELIVERED, so its record
+    # is still wake-eligible and the sweep would re-stage it into the fresh
+    # session. Retire the outgoing session's staged notes.
+    from ._subagent import _retire_undelivered_notes
+    _retire_undelivered_notes()
     st._READ_STREAK = 0
     st._YOLO_ASYNC_NUDGED = False
     # A reset forks a new session id so the fresh chat isn't written

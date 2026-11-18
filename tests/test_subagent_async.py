@@ -167,10 +167,15 @@ def test_run_tool_scan_sweeps_unstaged_completions(nx_fresh, monkeypatch):
     st._BG_SCAN_DONE = False
     out = _dispatch.run_tool("list_dir", {"path": "."})
     assert not out.startswith("ERROR")
-    note = _drain(nx_fresh)
-    assert note and "the answer" in note
-    # swept once: the sweep marks announced, so a later scan doesn't re-stage
-    _drain(nx_fresh)
+    # Delivery, not staging, retires the record (0.172 wake-loss fix): a raw
+    # `_drain` of the slot does NOT count as delivery, so the sweep would
+    # re-stage a note that never reached the transcript. Deliver it the way the
+    # runtime does — through the flush, which attributes delivery to the record —
+    # and only THEN does a later scan stop re-staging.
+    from nx._compress import _flush_pending_background_notice
+    delivered: list = []
+    _flush_pending_background_notice(delivered)
+    assert any("the answer" in d["content"] for d in delivered), delivered
     from nx._subagent import _stage_subagent_completions
     _stage_subagent_completions()
     assert _drain(nx_fresh) is None
@@ -473,18 +478,19 @@ def test_concurrent_async_agents_merge_into_one_note(nx_fresh, monkeypatch):
     gate.wait(timeout=30)  # both agents are past their turn loops
     from nx._subagent import _ASYNC_AGENTS, _ASYNC_LOCK
 
-    def _both_announced() -> bool:
+    def _both_staged() -> bool:
         # NON-destructive poll: _drain() CLEARS the slot, so polling through it
         # could consume agent A's half-note before B merges into the same slot,
         # leaving the merged note unobservable. Staging the note and setting
-        # `announced` happen under one _ASYNC_LOCK hold, so "every record
-        # announced" implies the merged note is complete in the slot (records
-        # are only evicted after that hold ends).
+        # `staged` happen under one _ASYNC_LOCK hold, so "every record staged"
+        # implies the merged note is complete in the slot (records are only
+        # evicted after that hold ends). `announced` (delivered) is not set
+        # here — nothing flushes to a transcript in this test (0.172).
         with _ASYNC_LOCK:
-            flags = [rec.get("announced") for rec in _ASYNC_AGENTS.values()]
-        return bool(flags) and all(flags)  # bool(): empty dict is not "announced"
+            flags = [rec.get("staged") for rec in _ASYNC_AGENTS.values()]
+        return bool(flags) and all(flags)  # bool(): empty dict is not "staged"
 
-    _wait_for(_both_announced, "both agents announced")
+    _wait_for(_both_staged, "both agents staged")
     note = _drain(nx_fresh)  # one destructive read, after both announced
     assert note and "task A" in note and "task B" in note, note
     assert "ans:task A" in note and "ans:task B" in note

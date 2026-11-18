@@ -946,22 +946,42 @@ def _stage_notice_owner(rec: "dict | None", key: str, text: str,
         return
     if prev is None:
         prev = _notices.get(key)
+    if prev and text in prev:
+        # Idempotency (announced-means-delivered): a lost note that gets
+        # re-staged by the parent sweep must not double a copy the frameless
+        # `set_` merge already holds. Every note is unique per job id, so a
+        # substring hit is a genuine duplicate.
+        return
     _notices.set_(key, f"{prev}\n{text}" if prev else text)
 
 
 def _stage_subagent_answer(job_id: str) -> None:
     """Stage the one-time [Runtime note] announcing a finished async agent.
 
-    Idempotent: the first caller to run a finished record wins `announced`,
-    so the answer is never announced twice (direct staging by the worker and
-    the run_tool() sweep both land here). Merges with any earlier unstaged
-    note so a burst of finishing agents is announced together (one flush,
-    not N)."""
+    Idempotent: `announced` now means DELIVERED (0.172 wake-loss fix), so it
+    is NOT burned here — it is set only when the note actually reaches the
+    transcript (the flush attributes it via `_mark_notes_delivered`). The
+    per-call idempotency that used to come from the `announced` burn now
+    comes from `_stage_notice_owner`'s substring dedup: re-entering this
+    function while the note still sits in the slot is a no-op, while a note
+    LOST to a sibling drain / frame-vs-store mismatch / sub-loop flush gate
+    is re-staged on the next sweep so the record can still be delivered.
+    Merges with any earlier unstaged note so a burst of finishing agents is
+    announced together (one flush, not N)."""
     with _ASYNC_LOCK:
         rec = _ASYNC_AGENTS.get(job_id)
         if rec is None or rec.get("announced") or rec.get("status") == "running":
             return
-        rec["announced"] = True
+        if rec.get("_note"):
+            # Already staged once but not yet delivered: its note was LOST
+            # (sibling drain / frame-vs-store mismatch / sub-loop flush gate).
+            # Re-stage the EXACT cached text — rebuilding from the record would
+            # produce different text (the RAM answer is trimmed after the first
+            # staging), which would defeat the slot dedup and delivery
+            # attribution. `_stage_notice_owner`'s substring dedup keeps this a
+            # no-op when the note is in fact still pending (0.172 wake-loss fix).
+            _stage_notice_owner(rec, _PENDING_NOTICE_KEY, rec["_note"])
+            return
         status, answer = rec.get("status", "done"), rec.get("answer") or ""
         report = rec.get("report")
         steered = rec.get("steered") or 0
@@ -1022,6 +1042,13 @@ def _stage_subagent_answer(job_id: str) -> None:
                 " FAILED — " + answer[:600] + "\n" + \
                 "Retry the task inline (async=false) if it still matters.]"
         _stage_notice_owner(rec, _PENDING_NOTICE_KEY, note, prev)
+        # Staged, not yet delivered: remember the exact note text so the flush
+        # that drains it can attribute delivery back to THIS record (and only
+        # this one), and mark it staged so the wake predicate can tell
+        # staged-but-pending from never-staged. `announced` stays False until
+        # the note is delivered.
+        rec["staged"] = True
+        rec["_note"] = note
         if steered:
             # 0.106.0: the user steered this agent mid-run from /tabs — tell
             # the parent so it reads the answer in that light (the agent's
@@ -1031,6 +1058,10 @@ def _stage_subagent_answer(job_id: str) -> None:
                       "ran (mid-course adjustments queued from /tabs); its "
                       "report reflects them.]")
             _stage_notice_owner(rec, _PENDING_NOTICE_KEY, s_note)
+            # Keep the re-stage cache equal to what actually went into the
+            # slot, so a LOST pair is restored together (and stays a substring
+            # of the merged slot for both dedup and delivery attribution).
+            rec["_note"] = note + "\n" + s_note
         # Swarm P3: the full answer is on disk (report), so retaining the
         # whole body in the job record is pure RSS - up to
         # NX_SUBAGENT_MAX_FINISHED=20 records x whole answers. Keep a bounded
@@ -1923,6 +1954,57 @@ def critique(focus: Any, paths: Any = None, severity: Any = None,
 
 
 # --- parent-side completion sweep --------------------------------------------
+
+def _mark_notes_delivered(text: "str | None") -> None:
+    """Attribute a just-delivered notice string back to the records whose note
+    it contains, marking them `announced` (delivered). Substring match on the
+    exact note text each record staged means a sibling's still-pending note
+    (absent from this delivered string) is never burned — the mark fires only
+    for records genuinely announced. Called by the runtime-note flush at every
+    point a `_PENDING_SUBAGENT_NOTICE` is appended to the transcript."""
+    if not text:
+        return
+    with _ASYNC_LOCK:
+        for rec in _ASYNC_AGENTS.values():
+            if rec.get("staged") and not rec.get("announced"):
+                _n = rec.get("_note")
+                if _n and _n in text:
+                    rec["announced"] = True
+                    # Delivered: the re-stage cache has no further use (a
+                    # delivered record early-returns from
+                    # _stage_subagent_answer), so don't hold the note text.
+                    rec["_note"] = None
+
+
+def _retire_undelivered_notes(owner_ident: "int | None" = None) -> None:
+    """Retire staged-but-undelivered sub-agent notes when nothing is left that
+    could ever deliver them. Two such paths:
+
+    * `/new` (0.128.3) — the conversation that asked is gone and its note slot
+      is cleared WITHOUT delivery, so the record would otherwise stay
+      wake-eligible and the completion sweep would re-stage the OUTGOING
+      session's answer into the fresh one.
+    * a batch task's finally — `discard_notice_ctx` drops the task's notes
+      WITHOUT folding them anywhere (correct for ownership), so an undelivered
+      note has no future delivery path and its record would never become an
+      eviction candidate (NX_SUBAGENT_MAX_FINISHED would not bound a long run).
+
+    Since `announced` now means DELIVERED (0.172 wake-loss fix), marking them
+    announced here keeps the pre-0.172 semantics for these paths only: a note
+    dropped with its session/task is consumed, exactly once.
+
+    `owner_ident` scopes the retire to ONE owner's records — a batch task
+    tearing down must never retire a SIBLING task's still-pending notes (that
+    is exactly the cross-talk 0.163.0 Phase E exists to prevent)."""
+    with _ASYNC_LOCK:
+        for rec in _ASYNC_AGENTS.values():
+            if rec.get("staged") and not rec.get("announced"):
+                if (owner_ident is not None
+                        and rec.get("owner_ident") != owner_ident):
+                    continue
+                rec["announced"] = True
+                rec["_note"] = None
+
 
 def _stage_subagent_completions() -> None:
     """Stage [Runtime note]s for async agents that finished since the model

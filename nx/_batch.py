@@ -877,6 +877,13 @@ def _run_one_task(task: dict[str, Any], run_id: str, idx: int,
         # this task still owns.
         _notices.unpublish(owner_ident, notice_frame)
         _notices.discard_notice_ctx(notice_frame)
+        # Anything THIS task still had staged in that frame was just dropped
+        # undelivered (correct for ownership — it must not fold into the module
+        # store for a sibling). Retire those records so they stop counting as
+        # wake-eligible and become eviction candidates again; scoped to this
+        # task's owner_ident so a sibling's pending notes are untouched.
+        from ._subagent import _retire_undelivered_notes
+        _retire_undelivered_notes(owner_ident)
         _TASK_TLS.owner_ident = None
         _reap_task_bg_jobs(bg_scope_clear())
         task.pop("_autowake", None)

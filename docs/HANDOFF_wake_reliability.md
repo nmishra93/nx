@@ -1,14 +1,11 @@
 ---
 title: "Wake reliability: main model misses subagent completion/failure"
-status: active
+status: resolved
 touched: 2026-11-18
-in_flight:
-  - Fix 1: non-TTY fallback editor discards wake (nx/_chatbox.py:1203-1205)
-  - Fix 2: announced burned at staging; lost note kills wake permanently (nx/_subagent.py:964, nx/_autowake.py:457-465)
-  - Fix 3: streak-cap park never wake-eligible (nx/_autowake.py:579-598, _NON_WAKE_NOTICE_SLOTS:413-418)
+in_flight: []
 next:
-  - Merge agent worktrees, run full suite, lint, commit per fix
-  - Add regression tests per fix
+  - Triager: tests/test_batch_run.py::test_autowake_finished_agent_gets_second_turn fails after tests/test_wake_stall.py runs (stale _WAKE_STALL_PENDING residue, reproduces at HEAD)
+  - Triager: tests/test_subagent.py::test_subagent_loop_uses_readonly_dispatch — env UnicodeDecodeError scanning a ~20MB binary
 read_first:
   - docs/HANDOFF_wake_reliability.md
 ---

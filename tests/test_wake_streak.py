@@ -48,6 +48,9 @@ def setup_function(_function):
         except Exception:
             pass
     _autowake._POLLER = None
+    _autowake._HOLD_STAGED = None
+    _autowake._CAP_NOTICE_ARMED = False
+    _autowake._PARK_REPORTED = False
 
 
 def _pending_plan():
@@ -124,6 +127,9 @@ def test_wake_due_false_at_streak_limit():
     m.st._PENDING_SUBAGENT_NOTICE = "[Runtime note: finished.]"
     try:
         m.st._WAKE_STREAK = 25
+        # The park's one-shot report wake fires on the first tripped call...
+        assert _autowake.wake_due() is True
+        # ...and every later tripped call stays parked (no loop).
         assert _autowake.wake_due() is False
         # ...and the guard is not merely shadowing the constant: at limit-1
         # with the same staged notice a wake IS due.
@@ -139,6 +145,7 @@ def test_chain_guard_honors_configured_limit():
     os.environ["NX_WAKE_STREAK_LIMIT"] = "3"
     try:
         m.st._WAKE_STREAK = 3
+        assert _autowake.wake_due() is True  # the park's one report wake
         assert _autowake.wake_due() is False
         m.st._WAKE_STREAK = 2
         assert _autowake.wake_due() is True
@@ -189,7 +196,8 @@ def test_streak_reset_reopens_the_chain():
     m.st._PENDING_SUBAGENT_NOTICE = "[Runtime note: finished.]"
     try:
         m.st._WAKE_STREAK = 25
-        assert _autowake.wake_due() is False, "chain capped"
+        assert _autowake.wake_due() is True, "park reports itself once"
+        assert _autowake.wake_due() is False, "then parked"
         m.st._WAKE_STREAK = 0  # what a typed turn (incl. a slash command) does
         assert _autowake.wake_due() is True, "typed turn restarts the chain"
     finally:
@@ -308,12 +316,18 @@ def test_budget_guard_trips_with_hold_notice_exactly_once():
     m.st._WAKE_CHAIN_SPEND = 50000  # exactly at budget -> trips (>=)
     m.st._PENDING_SUBAGENT_NOTICE = "[Runtime note: finished.]"
     try:
-        assert _autowake.wake_due() is False
+        # The first tripped call is the park's one report wake; ticks after
+        # that stay parked (Phase B idempotency still stages the note once).
+        assert _autowake.wake_due() is True
+        for _ in range(5):
+            assert _autowake.wake_due() is False
         note = _chain_notice_staged()
         assert note is not None
         assert "chain budget spent (50000/50000 tokens)" in note
         # poll ticks re-trip the same guard every 2s; the (guard, streak) key
-        # stages the explanation exactly once (Phase B idempotency).
+        # stages the explanation exactly once (Phase B idempotency), and the
+        # one report wake is spent on the first trip — later ticks stay parked.
+        assert _autowake.wake_due() is False
         for _ in range(5):
             assert _autowake.wake_due() is False
         assert _autowake._HOLD_STAGED == (_autowake._HOLD_BUDGET, 0)
@@ -343,6 +357,7 @@ def test_typed_input_reset_reopens_a_budget_parked_chain():
     m.st._WAKE_CHAIN_SPEND = 60000
     m.st._PENDING_SUBAGENT_NOTICE = "[Runtime note: finished.]"
     try:
+        assert _autowake.wake_due() is True  # park reports itself once
         assert _autowake.wake_due() is False
         _autowake.reset_chain_cost()  # what the typed path calls
         assert m.st._WAKE_CHAIN_SPEND == 0 and m.st._WAKE_CHAIN_BASE == 0
@@ -385,6 +400,77 @@ def test_note_chain_spend_ignores_unknown_usage_and_shrink():
     _autowake.note_chain_spend()
     assert m.st._WAKE_CHAIN_SPEND == 0
     assert m.st._WAKE_CHAIN_BASE == 12000
+
+
+# ---------------------------------------------------------------------------
+# 9. the park-report escape (one-shot "cap notice armed"): a parked chain
+#    gets exactly ONE wake-eligible signal to report the park, then stops.
+# ---------------------------------------------------------------------------
+
+def test_park_report_wake_fires_once_at_streak_cap():
+    _clear_chain_hold()
+    m.st._WAKE_ARMED = True
+    m.st._PENDING_SUBAGENT_NOTICE = "[Runtime note: finished.]"
+    try:
+        m.st._WAKE_STREAK = 25
+        # First tripped call consumes the one-shot report wake.
+        assert _autowake.wake_due() is True
+        # Every later call stays parked — no loop.
+        for _ in range(4):
+            assert _autowake.wake_due() is False
+        assert _autowake._CAP_NOTICE_ARMED is False
+        assert _autowake._PARK_REPORTED is True
+    finally:
+        m.st._PENDING_SUBAGENT_NOTICE = None
+
+
+def test_park_report_arm_resets_with_a_typed_turn():
+    # A new user message (streak reset, the _repl.py:469 seam) opens a NEW
+    # chain: a later park may report again — exactly once per park event.
+    _clear_chain_hold()
+    m.st._WAKE_ARMED = True
+    m.st._PENDING_SUBAGENT_NOTICE = "[Runtime note: finished.]"
+    try:
+        m.st._WAKE_STREAK = 25
+        assert _autowake.wake_due() is True   # park 1: report wake
+        assert _autowake.wake_due() is False  # parked, spent
+        m.st._WAKE_STREAK = 0                 # typed turn reset
+        assert _autowake.wake_due() is True
+        m.st._WAKE_STREAK = 25                # park 2
+        assert _autowake.wake_due() is True   # reports again, once
+        assert _autowake.wake_due() is False
+    finally:
+        m.st._PENDING_SUBAGENT_NOTICE = None
+
+
+def test_park_with_nothing_to_report_does_not_wake():
+    _clear_chain_hold()
+    m.st._WAKE_ARMED = True
+    m.st._WAKE_STREAK = 25
+    # No staged notice, no finished-unstaged work: nothing to report, no wake.
+    assert _autowake.wake_due() is False
+    assert _autowake._CAP_NOTICE_ARMED is False
+    # ...and the report latch must NOT arm while nothing is pending, so a
+    # later staged notice still gets its one wake.
+    m.st._PENDING_SUBAGENT_NOTICE = "[Runtime note: finished.]"
+    try:
+        assert _autowake.wake_due() is True
+        assert _autowake.wake_due() is False
+    finally:
+        m.st._PENDING_SUBAGENT_NOTICE = None
+
+
+def test_park_report_wake_for_spent_budget():
+    _clear_chain_hold()
+    os.environ["NX_WAKE_CHAIN_TOKEN_BUDGET"] = "50000"
+    m.st._WAKE_ARMED = True
+    m.st._WAKE_CHAIN_SPEND = 50000
+    m.st._PENDING_SUBAGENT_NOTICE = "[Runtime note: finished.]"
+    try:
+        assert _autowake.wake_due() is True   # one report wake
+        assert _autowake.wake_due() is False  # then parked
+    finally:
+        m.st._PENDING_SUBAGENT_NOTICE = None
 
 
 if __name__ == "__main__":

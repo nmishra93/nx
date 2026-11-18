@@ -167,14 +167,45 @@ _HOLD_STREAK_CAP = "streak_cap"
 _HOLD_BUDGET = "budget"
 
 
+# One-shot "cap notice armed" marker (park-report escape): set on the
+# transition into a park (streak crosses to >= limit, or chain budget first
+# expires) when there is something to report (a pending hold notice, or
+# finished-unstaged work). Consumed by the next wake_due() so the parked chain
+# can deliver ONE wake that reports the park and stops; while parked the flag
+# never re-arms (guard stays tripped on every tick), so no loop — only a new
+# user-typed turn (which resets the streak in _repl.py) can arm it again.
+_CAP_NOTICE_ARMED: bool = False
+# Set when the report wake is consumed; blocks re-arming while parked (a
+# consumed park must not re-arm — the report wake bumps the streak, which
+# would otherwise re-key the hold notice and re-arm forever).
+_PARK_REPORTED: bool = False
+
+
 def _release_hold_key(streak: int, limit: int) -> None:
     """Forget the hold-notice key once the streak is back under the cap (the
     user took the wheel), so a later chain that trips a guard explains itself
     again. A helper rather than an assignment in wake_due() so the module
     global keeps exactly the two owners it needs."""
-    global _HOLD_STAGED
+    global _HOLD_STAGED, _CAP_NOTICE_ARMED, _PARK_REPORTED
     if _HOLD_STAGED is not None and streak < limit:
         _HOLD_STAGED = None
+    if streak < limit:
+        _CAP_NOTICE_ARMED = False
+        _PARK_REPORTED = False
+
+
+def _park_report_worthy() -> bool:
+    """True when the parked chain has something to say: any staged wake-able
+    notice, or finished-unstaged work the park would otherwise bury. The hold
+    notice slot is read directly (it is in _NON_WAKE_NOTICE_SLOTS, so
+    _any_pending_notice excludes it). NOTE: called BEFORE the hold notice is
+    staged, so the notice never counts as its own reason to wake."""
+    from . import _notices
+    if _notices.get("_PENDING_WAKE_HOLD_NOTICE"):
+        return True
+    return bool(_any_pending_notice()
+                or _finished_unstaged_subagents()
+                or _finished_unseen_bg_jobs())
 
 
 def _wake_streak_limit() -> int:
@@ -562,7 +593,6 @@ def wake_due(due_out: dict | None = None) -> bool:
     # matches the branch that actually returned True (wake_instruction()
     # consumes it; note_turn_end() clears it at turn end).
     st._WAKE_STALL_PENDING = False
-    _branch_stall = False
     if not _wake_enabled() or not getattr(st, "_WAKE_ARMED", False):
         # Also forget a stale hold key: if wakes were disabled mid-chain and
         # the session re-arms later with a restored streak, the old key must
@@ -577,12 +607,24 @@ def wake_due(due_out: dict | None = None) -> bool:
     # keyboard that chain is unbounded — cap consecutive unattended wakes.
     # Any user-typed turn resets the streak in _repl.py.
     _limit = _wake_streak_limit()
+    global _CAP_NOTICE_ARMED, _PARK_REPORTED
     _streak = int(getattr(st, "_WAKE_STREAK", 0) or 0)
     if _streak >= _limit:
         # The trip is no longer silent (0.160.0): say once WHY the chain
         # parked. The note rides the next real prompt and can never itself
         # wake (_NON_WAKE_NOTICE_SLOTS).
+        # Park-report escape: on the FIRST trip of this park, arm one
+        # wake-eligible signal so the model can report the park and stop.
+        # Worthiness is read BEFORE staging the hold notice — the notice
+        # itself must not count as its own reason to wake.
+        _reportable = not _PARK_REPORTED and _park_report_worthy()
         _stage_hold_notice(f"wake streak {_streak}/{_limit}", _HOLD_STREAK_CAP)
+        if _reportable:
+            _CAP_NOTICE_ARMED = True
+        if _CAP_NOTICE_ARMED:
+            _CAP_NOTICE_ARMED = False  # one-shot: exactly one report wake
+            _PARK_REPORTED = True
+            return True
         return False
     # Chain cost bound (0.162.0, AUTOWAKE_SPEC Phase D): the cap counts wakes
     # while cost per wake varies ~100x, so an expensive chain parks on spent
@@ -593,8 +635,15 @@ def wake_due(due_out: dict | None = None) -> bool:
     _budget = _wake_chain_budget()
     _spend = int(getattr(st, "_WAKE_CHAIN_SPEND", 0) or 0)
     if _budget > 0 and _spend >= _budget:
+        _reportable = not _PARK_REPORTED and _park_report_worthy()
         _stage_hold_notice(f"chain budget spent ({_spend}/{_budget} tokens)",
                            _HOLD_BUDGET)
+        if _reportable:
+            _CAP_NOTICE_ARMED = True
+        if _CAP_NOTICE_ARMED:
+            _CAP_NOTICE_ARMED = False  # one-shot: exactly one report wake
+            _PARK_REPORTED = True
+            return True
         return False
     _release_hold_key(_streak, _limit)
     if st._WAKE_DUE:
@@ -664,13 +713,19 @@ def wake_due(due_out: dict | None = None) -> bool:
     # bg-bash job lets execution reach this point — the map exists and the
     # sweep reports nothing. Without this check the trigger would fire 20s into
     # a 10-minute build, which is exactly the phantom wake §2 forbids.
-    if (_campaign_pending() and _stall_due()
-            and not _work_in_flight()):
+    _stall = bool(_campaign_pending() and _stall_due()
+                  and not _work_in_flight())
+    if _stall:
         st._WAKE_STALL_PENDING = True
-        _branch_stall = True
+        if due_out is not None:
+            # Write BEFORE returning: the consumer (_repl.py) reads this flag to
+            # stamp _WAKE_STALL_REVISION — the stall terminator. Skipping the
+            # write on the True path left the terminator permanently open and
+            # re-fired the stall wake every grace period (0.172.1).
+            due_out["stall"] = True
         return True
     if due_out is not None:
-        due_out["stall"] = _branch_stall
+        due_out["stall"] = False
     return False
 
 

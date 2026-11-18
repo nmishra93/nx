@@ -274,7 +274,7 @@ def search_files(
     exclude_dirs = [d.strip() for d in os.environ.get(
         "NX_SEARCH_EXCLUDE_DIRS",
         ".git .hg .svn .venv venv env node_modules __pycache__ .mypy_cache "
-        ".pytest_cache .ruff_cache .tox dist build .eggs",
+        ".pytest_cache .ruff_cache .tox dist build .eggs .nx bench_res",
     ).split() if d.strip()]
     if use_rg:
         cmd = ["rg", "--no-heading", "--color=never", *pattern_flags]
@@ -309,7 +309,12 @@ def search_files(
             cmd += ["--include=" + str(glob)]
         cmd += ["--", str(path)]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        # errors=replace: grep/rg can emit raw matched bytes from binary files
+        # even when the exclude list misses them — a decoder crash must never
+        # take the tool down (seen live: grep fallback over a .nx venv binary
+        # raised UnicodeDecodeError out of subprocess.run).
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30,
+                              errors="replace")
     except FileNotFoundError as e:
         return f"ERROR: no search backend found (rg/grep): {e}"
     except subprocess.TimeoutExpired:

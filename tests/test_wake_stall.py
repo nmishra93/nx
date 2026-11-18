@@ -293,7 +293,7 @@ def test_typed_input_clears_clock_and_hold(monkeypatch):
 # ---------------------------------------------------------------------------
 
 _ESCAP = ("if you stopped because you need the user, or because the plan is "
-          "complete, say so in one line and take no action")
+          "complete, take no action and just end the turn")
 
 
 def test_stall_instruction_names_the_pending_items():

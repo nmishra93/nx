@@ -111,7 +111,7 @@ def _stub_agents(monkeypatch, calls, spec=SPEC, on_package=None):
     the tree they were given. `calls` records every (kind, kwargs)."""
 
     def fake(instruction, max_turns, tier="read", scope=None, worktree=None,
-             job_id=None):
+             job_id=None, **_):
         low = instruction.lower()
         tree = worktree or str(st.PROJECT_ROOT)
         if "spec writer" in low or "spec file" in low:

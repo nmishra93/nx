@@ -78,7 +78,7 @@ WAKE_INSTRUCTION = (
     "async sub-agent) finished while you were idle — the REPL woke this turn "
     "for you. The completion note is below. Act on it now: collect the "
     "result, do the work that was waiting on it, and stop when done. If "
-    "nothing needs doing, say so in one line.]"
+    "nothing needs doing, just end the turn — no reply, no acknowledgment.]"
 )
 
 # The wake-turn instruction for an unattended campaign (0.121.0): pending
@@ -118,7 +118,7 @@ STALL_WAKE_INSTRUCTION = (
     "spawn the next phase as a BACKGROUND write/implement-tier agent, then end "
     "your turn to let it run. nx cannot tell a stall from a deliberate stop: if "
     "you stopped because you need the user, or because the plan is complete, "
-    "say so in one line and take no action.]"
+    "take no action and just end the turn — no reply, no acknowledgment.]"
 )
 
 

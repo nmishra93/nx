@@ -108,7 +108,7 @@ def test_prose_only_implement_agent_downgraded(tmp_path, monkeypatch):
     # the agent "finished" with a plan and never touched the tree
     monkeypatch.setattr(S, "_run_sync_agent_body",
                         lambda instruction, max_turns, tier="read", scope=None,
-                        worktree=None, job_id=None:
+                        worktree=None, job_id=None, **_:
                         "Here is my plan: 1. edit foo 2. edit bar")
     monkeypatch.setattr(S, "_write_agent_report", lambda *a, **k: "/tmp/r.md")
     S._ASYNC_AGENTS["job-p1"] = {"status": "running", "answer": None,
@@ -129,7 +129,7 @@ def test_implement_agent_with_edits_stays_done(tmp_path, monkeypatch):
     nx.NX_SUBAGENT_WORKTREE = 0
 
     def editing_body(instruction, max_turns, tier="read", scope=None,
-                     worktree=None, job_id=None):
+                     worktree=None, job_id=None, **_):
         (tmp_path / "nx" / "mod.py").write_text("x = 2  # edited\n")
         return "done, edited nx/mod.py"
 
@@ -152,7 +152,7 @@ def test_read_tier_agent_skips_outcome_check(nx_fresh, monkeypatch):
                         lambda *a: called.append(a) or False)
     monkeypatch.setattr(S, "_run_sync_agent_body",
                         lambda instruction, max_turns, tier="read", scope=None,
-                        worktree=None, job_id=None: "findings: X is in nx/_x.py")
+                        worktree=None, job_id=None, **_: "findings: X is in nx/_x.py")
     monkeypatch.setattr(S, "_write_agent_report", lambda *a, **k: "/tmp/r.md")
     S._ASYNC_AGENTS["job-r"] = {"status": "running", "answer": None,
                                 "instruction": "find X", "announced": False,
@@ -204,7 +204,7 @@ def test_worktree_agent_editing_shared_tree_stays_done(tmp_path, monkeypatch):
     _repo(wt)  # a pristine worktree checkout — the agent never touches it
 
     def editing_shared_tree(instruction, max_turns, tier="read", scope=None,
-                            worktree=None, job_id=None):
+                            worktree=None, job_id=None, **_):
         (tmp_path / "nx" / "mod.py").write_text("x = 2  # edited\n")
         return "done, edited nx/mod.py"
 
@@ -230,7 +230,7 @@ def test_prose_only_downgrade_appends_hint(tmp_path, monkeypatch):
     nx.NX_SUBAGENT_WORKTREE = 0
     monkeypatch.setattr(S, "_run_sync_agent_body",
                         lambda instruction, max_turns, tier="read", scope=None,
-                        worktree=None, job_id=None: "My plan: edit things")
+                        worktree=None, job_id=None, **_: "My plan: edit things")
     monkeypatch.setattr(S, "_write_agent_report", lambda *a, **k: "/tmp/r.md")
     S._ASYNC_AGENTS["job-p3"] = {"status": "running", "answer": None,
                                  "instruction": "implement it",

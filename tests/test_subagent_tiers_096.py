@@ -22,7 +22,7 @@ def _setup(tmp_path, monkeypatch):
     nx.NX_SUBAGENT_SYNC_INLINE = 0
     monkeypatch.setattr(S, "_run_sync_agent_body",
                         lambda instruction, max_turns, tier="read", scope=None,
-                        worktree=None, job_id=None:
+                        worktree=None, job_id=None, **_:
                         "did the thing" * 200)
 
 

@@ -432,6 +432,28 @@ def _write_agent_report(job_id: str, instruction: str, status: str,
         return None
 
 
+def _write_agent_transcript(job_id: str, messages: "list[dict[str, Any]]") -> str | None:
+    """Persist a sub-agent's full message list to
+    SESSION_HOME/agents/<project-slug>/<job_id>.messages.json (0.173.0).
+
+    The sub-loop's transcript was previously in-RAM only: once the worker
+    thread finished, WHAT THE AGENT ACTUALLY SAW was unrecoverable, so a
+    hallucinated-instruction complaint (a model claiming its prompt told it
+    to 'reply with only Hello') was unverifiable. Written on the worker
+    thread right after the sub-loop returns, for every async agent with a
+    job id (foreground agents return their loop through the parent's tool
+    result, which IS stored). Best-effort like the report file; never
+    raises. Purged with the reports by _purge_old_agent_reports."""
+    try:
+        d = _agents_report_dir()
+        private_dir(d)
+        path = os.path.join(d, f"{job_id}.messages.json")
+        atomic_write_private(path, json.dumps(messages, indent=1, default=str))
+        return path
+    except Exception:  # noqa: BLE001 — forensics must never break a spawn
+        return None
+
+
 def _purge_old_agent_reports(max_age_days: int = _ASYNC_REPORT_TTL_DAYS) -> None:
     """Remove agent reports older than max_age_days (best-effort, mirrors
     _purge_old_overflow).
@@ -447,6 +469,9 @@ def _purge_old_agent_reports(max_age_days: int = _ASYNC_REPORT_TTL_DAYS) -> None
                 try:
                     # never remove the slug subdirs themselves from the parent
                     if os.path.isdir(p):
+                        continue
+                    # .messages.json rides the report TTL too
+                    if not (name.endswith(".md") or name.endswith(".messages.json")):
                         continue
                     if (now - os.path.getmtime(p)) > max_age_days * 86400:
                         os.remove(p)
@@ -802,9 +827,20 @@ def _run_async_agent(job_id: str, instruction: str, max_turns: int,
         _finalize_async_record(job_id, handle, announce)
         return
     try:
+        agent_messages: list = []
         answer = _run_sync_agent_body(instruction, max_turns, tier=tier,
                                       scope=scope, worktree=worktree,
-                                      job_id=job_id)
+                                      job_id=job_id,
+                                      messages_out=agent_messages)
+        # 0.173.0: persist the sub-loop's full transcript — what the agent
+        # actually saw, for post-hoc verification of hallucinated-instruction
+        # complaints (see _write_agent_transcript). Belt-and-braces try: the
+        # helper never raises, and forensics must never flip a done agent.
+        if job_id:
+            try:
+                _write_agent_transcript(job_id, agent_messages)
+            except Exception:  # noqa: BLE001 — see above
+                pass
         # The unwrapped body: the worker does its OWN report write + [Runtime
         # note] staging below; _run_sync_agent's head+path tool-result wrapper
         # is for the parent's synchronous tool call only. The body turns most
@@ -1428,7 +1464,8 @@ def _agent_posture(write: bool, quiet: bool) -> "tuple[bool, str | None] | None"
 def _run_sync_agent_body(instruction: str, max_turns: int, tier: str = "read",
                          scope: "list[str] | None" = None,
                          worktree: "str | None" = None,
-                         job_id: "str | None" = None) -> str:
+                         job_id: "str | None" = None,
+                         messages_out: "list | None" = None) -> str:
     """The actual foreground sub-loop (wrapped by _run_sync_agent, which adds
     the report-file + head/path staging shared with the async path).
     `worktree` (0.97.0): when set, write-tier calls are rewritten into that
@@ -1659,6 +1696,10 @@ def _run_sync_agent_body(instruction: str, max_turns: int, tier: str = "read",
             except Exception:
                 pass
         _SUBAGENT_TLS.ctx = prev_ctx
+    # Forensic record: hand the sub-loop's messages to the async worker (which
+    # persists them) without coupling this body to the disk write.
+    if messages_out is not None:
+        messages_out.extend(messages)
     # Extract the last assistant text as the answer (the loop's final turn).
     answer = ""
     for msg in reversed(messages):

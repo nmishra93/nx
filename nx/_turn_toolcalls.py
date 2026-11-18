@@ -49,8 +49,8 @@ CONTINUATION_NUDGE = (
     "Your previous reply was cut off by the per-response token limit — it ended "
     "mid-stream. Resume your reply from the exact point it stopped. Do not repeat "
     "or summarize what you already wrote; just continue the text seamlessly. "
-    "If the previous reply was actually complete, reply with the single word "
-    "(done) and nothing else.")
+    "If the previous reply was actually complete, say (done) and stop — do not "
+    "invent any other acknowledgment.")
 
 
 def _handle_forced_final_tool_call(messages: list[Message], tcs: dict, text: str,
